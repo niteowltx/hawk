@@ -1,0 +1,72 @@
+#!/usr/bin/awk -f
+
+# Produce graphs from hawk output.  Mainly useful to
+# watch user memory and time usage.  Somewhat useful for kernel activity.
+#
+# To use, capture some hawk output with (e.g.) 'hawk -m -k >/tmp/hawk.out'
+# Then run 'hawk_graph </tmp/hawk.out'.  The output will be
+# a bunch of png graphs in a subdirectory named 'out'.
+
+# Depends on gnuplot
+
+BEGIN{
+	PROCINFO["sorted_in"] = "@ind_str_asc"		# get awk to sort everything
+	system ("rm -fr out; mkdir out\n");		# remove any old plots, create new empty area
+}
+
+/^=== Pass/{
+	Pass = sprintf( "%08d",$3);	# pad with leading zeroes so it sorts correctly
+	next
+}
+
+{
+	# Line is of the form: pid name value old new [delta]
+	if( $5 == "UNDEF" )		# new value UNDEF means it went away
+		next
+	if( match($3,"Fd[0-9]") == 1 )	# can't plot file descriptor names (FdCount is okay)
+		next
+	if( match($3,"Mmap") == 1 )	# can't plot mmap areas
+		next
+	gsub(/\//,"-",$2);		# replace / with - in name (kworker threads are named like this)
+	if( $1 == "0" ){	# kernel has a lot of values with names of AREA-SUBAREA, split them up into smaller graphs by kernel area
+		split($3,tmp,"-");
+		$2 = ($2 "-" tmp[1]);
+		$3 = tmp[2];
+		}
+	Arr[$1 "-" $2][$3][Pass] = strtonum("0x" $5);	# convert to decimal
+	Count[$1 "-" $2][$3] += 1;
+}
+
+END{
+	for( name in Arr){
+		style=1;
+		plotname = ("out/" name ".plot");
+		for( val in Arr[name]){
+			if( Count[name][val] > 2 ){	# only plot things with 3 or more data points
+				if( style == 1 ){	# first dataset, set plot display parameters
+					printf "set terminal png giant size 1600,1200\n" >> plotname;
+					printf "set key below Left title 'Legend' box 3\n" >> plotname;
+					printf "set grid ytics linecolor rgb '#808080' linewidth 0.5\n" >> plotname;
+					printf "set pointsize 1.5\n" >> plotname;
+					printf "set xtics axis out\n" >> plotname;
+					printf "set ytics axis out\n" >> plotname;
+					printf "set xrange [0:%d]\n",Pass >> plotname;
+					printf "set yrange [0:*]\n" >> plotname;
+					printf "set xlabel \"Pass\"\n" >> plotname;
+					printf "set ylabel \"Value\"\n" >> plotname;
+					printf "plot " >> plotname;
+					}
+				dataname = ( name "-" val );
+				printf "\"%s\" with linespoints linestyle %d, ",dataname,style >> plotname;
+				style++;
+				for(pass in Arr[name][val] )
+					printf "%s\t%s\n",pass,Arr[name][val][pass] >> ("out/" dataname);
+				}
+			}
+		if( style > 1 ){
+			printf "\n" >>plotname;
+			system ("cd out; gnuplot '../" plotname "' > '" name ".png'\n");
+			}
+		}
+	system ("find out -type f ! -name  '*.png' | xargs rm -f");
+}
