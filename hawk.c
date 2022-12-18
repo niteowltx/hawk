@@ -19,48 +19,48 @@
 #define	MAXVAL		256			// longest string value
 #define	MAXPNAME	32			// longest process name
 
-int	Pass		= 0;
-int	Pass_printed	= 0;	// has this pass caused any output?
-int	Update_interval	= 10;	// seconds between updates
-int	Update_limit	= 0;	// maximum updates. 0 = run forever
-int	Verbose		= 0;
-int	Timewatch	= 0;	// watch accumulated time
-int	Memwatch	= 0;	// watch memory related items
-int	Procwatch	= 0;	// watch process create/exit related items
-int	Filewatch	= 0;	// watch file open/close related items
-int	Kernelwatch	= 0;	// watch kernel related items
-int	Yaffswatch	= 0;	// watch YAFFS related items
-int	Externaltrigger	= 0;	// trigger new pass by watching for file?
+unsigned int	Pass	= 0;
+bool	Pass_printed	= false;	// has this pass caused any output?
+int	Update_interval	= 10;		// seconds between updates
+bool	Verbose		= false;
+bool	Timewatch	= false;	// watch accumulated time
+bool	Memwatch	= false;	// watch memory related items
+bool	Procwatch	= false;	// watch process create/exit related items
+bool	Filewatch	= false;	// watch file open/close related items
+bool	Kernelwatch	= false;	// watch kernel related items
+bool	Yaffswatch	= false;	// watch YAFFS related items
+bool	Externaltrigger	= false;	// trigger new pass by watching for file?
 
 typedef struct val{
-	struct val *vnext;
-	struct val *vprev;
-	char	name[MAXNAME];
-	char	val[MAXVAL];
-	int	lastupdate;
+	struct val	*vnext;
+	struct val	*vprev;
+	char		name[MAXNAME];
+	char		val[MAXVAL];
+	unsigned int	lastupdate;
 	long long int	valint;
 } val_t;
 val_t *Vfree = NULL;
 
 typedef struct proc {
-	struct proc *pnext;
-	struct proc *pprev;
-	int	pid;		// pid of this process
-	val_t	vlist;		// list of watched values
-	int	vcount;		// how many values for this proc
-	int	appeared;	// first time this pid was noticed
-	int	lastupdate;	// last time this pid was updated
-	int	isclone;	// is this a clone of some other pid?
+	struct proc	*pnext;
+	struct proc	*pprev;
+	unsigned int	pid;		// pid of this process
+	val_t		vlist;		// list of watched values
+	unsigned int	vcount;		// how many values for this proc
+	unsigned int	appeared;	// first time this pid was noticed
+	unsigned int	lastupdate;	// last time this pid was updated
+	bool		isclone;	// is this a clone of some other pid?
 }proc_t;
 
 proc_t *Pfree = NULL;
 proc_t Phead = {
 	.pnext = &Phead,
 	.pprev = &Phead,
-	.pid   = -1,
+	.pid = -1,
 	.vcount = 0,
 	.appeared = -1,
 	.lastupdate = -1,
+	.isclone = false,
 	};
 
 // replace all whitespace with _
@@ -113,7 +113,7 @@ val_lookup(proc_t *p, const char *name)
 
 	if( strcmp(name,"Name")==0 )
 		return &p->vlist;
-	for(v=p->vlist.vnext; v !=  &p->vlist; v=v->vnext)
+	for(v=p->vlist.vnext; v != &p->vlist; v=v->vnext)
 		if( strncmp(name,v->name,MAXVAL-1)== 0)
 			return v;
 	// create it
@@ -155,7 +155,7 @@ proc_alloc(void)
 	v->val[0] = '\0';
 	p->vcount = 0;
 	p->appeared = p->lastupdate = Pass;
-	p->isclone = 0;	// not a clone until proven otherwise
+	p->isclone = false;	// not a clone until proven otherwise
 	return p;
 }
 
@@ -167,7 +167,7 @@ show_pass()
 	if( !Pass_printed ){
 		time(&t);
 		printf("=== Pass %d =================== %s",Pass,ctime(&t));
-		Pass_printed=1;
+		Pass_printed=true;
 		}
 }
 
@@ -517,7 +517,7 @@ val_cleanup(proc_t *p, val_t *v)
 void
 proc_cleanup(proc_t *p)
 {
-	val_t  *v;
+	val_t	*v;
 
 	while( (v=p->vlist.vnext) != &p->vlist )	// reclaim all valinfo structures
 		val_free(v);
@@ -529,8 +529,8 @@ proc_cleanup(proc_t *p)
 void
 cleanup(void)
 {
-	proc_t *p,*p2;
-	val_t  *v, *v2;
+	proc_t	*p,*p2;
+	val_t	*v, *v2;
 
 	for(p=Phead.pnext; p != &Phead; p=p->pnext)
 		if( p->lastupdate != Pass ){	// not seen this pass
@@ -539,7 +539,7 @@ cleanup(void)
 			p = p2;
 			}
 		else if( !p->isclone){	// if not a clone, check if any values have disappeared
-			for(v=p->vlist.vnext; v !=  &p->vlist; v=v->vnext)
+			for(v=p->vlist.vnext; v != &p->vlist; v=v->vnext)
 				if( v->lastupdate != Pass ){
 					v2 = v->vprev;	// resume scan at previous
 					val_cleanup(p,v);
@@ -552,7 +552,7 @@ cleanup(void)
 int
 valmatch(val_t *v, val_t *list)
 {
-	val_t *vscan;
+	val_t	*vscan;
 
 	// don't insist on a match for these
 	if( strcmp(v->name,"PPid")==0 || strcmp(v->name,"TaskFlags")==0 )
@@ -568,16 +568,16 @@ valmatch(val_t *v, val_t *list)
 void
 clone_check(void)
 {
-	proc_t *p1,*p2;
-	val_t  *v;
-	char *n1;
-	int matchval, matchpercent;
+	proc_t	*p1,*p2;
+	val_t	*v;
+	char	*n1;
+	int	matchval, matchpercent;
 
 	for(p1=Phead.pnext; p1 != &Phead; p1=p1->pnext){
 		if( p1->isclone )
 			continue;	// already known clone
 		n1 = proc_name(p1);
-		for(p2=p1->pnext;   p2 != &Phead; p2=p2->pnext){
+		for(p2=p1->pnext; p2 != &Phead; p2=p2->pnext){
 			if( p2->isclone )
 				continue;	// already known clone
 			if( p1->vcount != p2->vcount )
@@ -590,7 +590,7 @@ clone_check(void)
 					matchval++;
 			matchpercent = p2->vcount ? (matchval*100)/p2->vcount : 0;
 			if( matchpercent > 95 ){
-				p2->isclone = 1;
+				p2->isclone = true;
 				if(Procwatch && Verbose){
 					pid_display(p2);
 					printf("%d%% clone of %d\n",matchpercent,p1->pid);
@@ -824,29 +824,45 @@ pause_for_next_pass(void)
 	}
 }
 
+static inline void
+handle_args(char *s)
+{
+	if( isdigit(*s) ){
+		Update_interval=atoi(s);
+		return;
+		}
+	if( *s == '-' ){
+		while( *s ){
+			switch(*s++){
+			case 'v': Verbose=true; break;
+			case 't': Timewatch=true; break;
+			case 'm': Memwatch=true; break;
+			case 'p': Procwatch=true; break;
+			case 'f': Filewatch=true; break;
+			case 'k': Kernelwatch=true; break;
+			case 'y': Yaffswatch=Kernelwatch=true; break;
+			case 'x': Externaltrigger=true; break;
+			case '-': break;
+			default: usage(); break;
+				}
+			}
+		return;
+		}
+	usage();
+}
+
 int
 main(int argc, char **argv)
 {
 	int pid;
 	DIR *d;
 	struct dirent *v;
-	char *a;
 	int hawk_pid = getpid();
 	proc_t *p;
 	char pdir[BUFSIZE];
 
-	while(--argc){
-		a = *++argv;
-		if( strcmp(a,"-v")==0 )Verbose=1;
-		else if( strcmp(a,"-t")==0 )Timewatch=1;
-		else if( strcmp(a,"-m")==0 )Memwatch=1;
-		else if( strcmp(a,"-p")==0 )Procwatch=1;
-		else if( strcmp(a,"-f")==0 )Filewatch=1;
-		else if( strcmp(a,"-k")==0 )Kernelwatch=1;
-		else if( strcmp(a,"-y")==0 )Yaffswatch=Kernelwatch=1;
-		else if( strcmp(a,"-x")==0 )Externaltrigger=1;
-		else usage();
-		}
+	while(--argc)
+		handle_args(*++argv);
 
 	if(Timewatch==0 && Memwatch==0 && Procwatch==0 && Filewatch==0 && Kernelwatch==0 && Yaffswatch==0)
 		Memwatch=Filewatch=1;	// default to -m -f
@@ -854,8 +870,8 @@ main(int argc, char **argv)
 	if( nice(10) < 0 )
 		printf("not nice\n");
 
-	for(Pass=0;Update_limit==0 || Pass<Update_limit;Pass++){
-		Pass_printed = 0;
+	for(Pass=0;;Pass++){
+		Pass_printed = false;
 		if(Kernelwatch)
 			update_system();
 		d = opendir("/proc");
@@ -877,8 +893,6 @@ main(int argc, char **argv)
 		clone_check();
 		cleanup();
 		pause_for_next_pass();
-		if( Update_interval < 0 )
-			break;
 		}
 	exit(0);
 }
