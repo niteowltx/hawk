@@ -29,6 +29,7 @@ bool	Procwatch	= false;	// watch process create/exit related items
 bool	Filewatch	= false;	// watch file open/close related items
 bool	Kernelwatch	= false;	// watch kernel related items
 bool	Yaffswatch	= false;	// watch YAFFS related items
+bool	Diskwatch	= false;	// watch disk I/O related items
 bool	Externaltrigger	= false;	// trigger new pass by watching for file?
 
 typedef struct val{
@@ -615,22 +616,6 @@ update_user(proc_t *p)
 		update_pid_fd(p,"fd");
 }
 
-static void
-usage(void)
-{
-	printf("Usage: hawk [-v] [-x] [-t] [-m] [-p] [-f] [-k] [-y]\n");
-	printf(" -t watch time\n");
-	printf(" -m watch memory\n");
-	printf(" -p watch process\n");
-	printf(" -f watch files\n");
-	printf(" -k watch kernel activity\n");
-	printf(" -y watch YAFFS activity (implies -k)\n");
-	printf(" -v verbose\n");
-	printf(" -x external trigger by file (%s)\n",TRIGGER_FILE);
-	printf("Default is -m -f\n");
-	exit(1);
-}
-
 static inline int
 discard(FILE *fp, int nlines)
 {
@@ -790,6 +775,28 @@ update_system_yaffs(proc_t *p, char *path)
 }
 
 void
+update_system_disk(proc_t *p, char *path)
+{
+	FILE *fp = fopen(path,"r");
+	char buf[BUFSIZE];
+	char device[BUFSIZE];
+	char tmp[BUFSIZE];
+	long long int major,minor,reads,rmerge,sectors,read_time,writes;	// there are more, but only want read/write
+
+	if(fp==NULL)return;
+	while( fgets(buf,sizeof(buf),fp) != NULL ){
+		if( sscanf(buf,"%lld %lld %s %lld %lld %lld %lld %lld",&major,&minor,device,&reads,&rmerge,&sectors,&read_time,&writes) == 8 ){
+			no_white(device);	// unlikely, but possible?
+			sprintf(tmp,"%s-read",device);
+			val_update_int(p,tmp,reads);
+			sprintf(tmp,"%s-write",device);
+			val_update_int(p,tmp,writes);
+			}
+		}
+	fclose(fp);
+}
+
+void
 update_system(void)
 {
 	proc_t *p = lookup_proc(0);
@@ -800,12 +807,12 @@ update_system(void)
 		update_system_meminfo(p,"/proc/meminfo");
 		update_system_vmstat(p,"/proc/vmstat");
 		}
-	if(Timewatch){
+	if(Timewatch)
 		update_system_stat(p,"/proc/stat");
-		}
-	if(Yaffswatch){
+	if(Yaffswatch)
 		update_system_yaffs(p,"/proc/yaffs");
-		}
+	if(Diskwatch)
+		update_system_disk(p,"/proc/diskstats");
 }
 
 void
@@ -822,6 +829,23 @@ pause_for_next_pass(void)
 	else {
 		sleep(Update_interval);
 	}
+}
+
+static void
+usage(void)
+{
+	printf("Usage: hawk [-v] [-x] [-t] [-m] [-p] [-f] [-k] [-y] [-d]\n");
+	printf(" -t watch time\n");
+	printf(" -m watch memory\n");
+	printf(" -p watch process\n");
+	printf(" -f watch files\n");
+	printf(" -k watch kernel activity\n");
+	printf(" -y watch YAFFS activity (implies -k)\n");
+	printf(" -d watch disk activity (implies -k)\n");
+	printf(" -v verbose\n");
+	printf(" -x external trigger by file (%s)\n",TRIGGER_FILE);
+	printf("Default is -m -f\n");
+	exit(1);
 }
 
 static inline void
@@ -841,6 +865,7 @@ handle_args(char *s)
 			case 'f': Filewatch=true; break;
 			case 'k': Kernelwatch=true; break;
 			case 'y': Yaffswatch=Kernelwatch=true; break;
+			case 'd': Diskwatch=Kernelwatch=true; break;
 			case 'x': Externaltrigger=true; break;
 			case '-': break;
 			default: usage(); break;
